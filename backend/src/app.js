@@ -21,14 +21,8 @@ const origenesPermitidos = (process.env.CORS_ORIGIN || 'http://localhost:5173')
 
 app.use(
   cors({
-    origin(origin, callback) {
-      if (esDesarrollo || !origin || origenesPermitidos.includes(origin)) {
-        return callback(null, true);
-      }
-      return callback(null, false);
-    },
-    credentials: true,
-    // Expone los encabezados que el frontend necesita leer (nombre del archivo descargado).
+    origin: '*', // Acepta cualquier origen
+    credentials: true, // ⚠️ Ojo: no puedes usar credentials: true con origin: '*'
     exposedHeaders: ['Content-Disposition', 'Content-Length'],
   })
 );
