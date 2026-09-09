@@ -1,0 +1,13 @@
+{
+  "name": "contraloria",
+  "version": "1.0.0",
+  "description": "Sistema de Contraloría (monorepo con backend API y frontend React)",
+  "private": true,
+  "scripts": {
+    "dev:backend": "pnpm --filter contraloria-backend dev",
+    "dev:frontend": "pnpm --filter contraloria-frontend dev",
+    "dev": "pnpm --parallel --filter contraloria-backend --filter contraloria-frontend dev",
+    "build": "pnpm --filter contraloria-frontend build",
+    "typecheck": "pnpm --filter contraloria-frontend typecheck"
+  }
+}

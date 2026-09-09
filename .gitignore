@@ -1,5 +1,24 @@
+# Dependencias
 node_modules/
+.pnpm-store/
+
+# Entorno
+.env
+.env.local
+
+# Builds
 dist/
-*.tsbuildinfo
+build/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Sistema
 .DS_Store
 Thumbs.db
+
+# IDE
+.vscode/
+.idea/

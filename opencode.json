@@ -1,0 +1,18 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["AGENTS.md"],
+  "default_agent": "contraloria-dev",
+  "skills": {
+    "paths": [".opencode/skills"]
+  },
+  "command": {
+    "test": {
+      "description": "Ejecuta las pruebas del proyecto (frontend y backend).",
+      "template": "Ejecuta las pruebas del sistema de contraloría: para el backend Node/Express usa el comando de pruebas definido en su package.json (ej: `pnpm --filter contraloria-backend test`) y para frontend usa Vitest (`pnpm --filter contraloria-frontend test`). Reporta los resultados en español."
+    },
+    "lint": {
+      "description": "Ejecuta lint y typecheck del proyecto.",
+      "template": "Ejecuta lint y typecheck del sistema de contraloría: revisa si existen scripts en el package.json del frontend y del backend Node/Express y ejecútalos con pnpm (ej: `pnpm typecheck`). Reporta los resultados en español."
+    }
+  }
+}
