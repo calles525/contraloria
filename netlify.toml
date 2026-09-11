@@ -1,0 +1,12 @@
+# Configuracion de despliegue en Netlify para el monorepo pnpm
+[build]
+  base = "frontend"
+  install_command = "corepack enable && pnpm install"
+  command = "pnpm build"
+  publish = "dist"
+
+# Redireccion SPA: toda ruta cae al index.html (React Router)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
