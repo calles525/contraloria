@@ -13,16 +13,21 @@ const app = express();
 
 app.use(helmet());
 
-const esDesarrollo = process.env.NODE_ENV === 'development';
 const origenesPermitidos = (process.env.CORS_ORIGIN || 'http://localhost:5173')
   .split(',')
   .map((o) => o.trim())
   .filter(Boolean);
 
+// Si la lista contiene "*", se acepta cualquier origen.
+const permitirTodosLosOrigenes = origenesPermitidos.includes('*');
+
 app.use(
   cors({
     origin(origin, callback) {
-      if (esDesarrollo || !origin || origenesPermitidos.includes(origin)) {
+      // Sin excepciones por entorno: solo se aceptan los orígenes listados,
+      // salvo que CORS_ORIGIN contenga "*" (acepta cualquier origen).
+      // Las peticiones sin origen (curl, Postman, misma app) se permiten.
+      if (!origin || permitirTodosLosOrigenes || origenesPermitidos.includes(origin)) {
         return callback(null, true);
       }
       return callback(null, false);
