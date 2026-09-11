@@ -1,8 +1,6 @@
-import dotenv from 'dotenv';
+import './config/env.js';
 import app from './app.js';
 import { pool } from './config/db.js';
-
-dotenv.config();
 
 const PORT = process.env.PORT || 9999;
 
