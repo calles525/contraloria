@@ -4,7 +4,7 @@ import { pool } from './config/db.js';
 
 dotenv.config();
 
-const PORT = process.env.PORT || 3030;
+const PORT = process.env.PORT || 9999;
 
 async function iniciar() {
   try {
