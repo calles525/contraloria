@@ -27,8 +27,12 @@ export default function Login() {
       iniciarSesion(data.token);
       navigate('/');
     } catch (err: any) {
-      const mensaje = err.response?.data?.message || 'Error al iniciar sesión.';
-      setError(mensaje);
+      if (err.code === 'ECONNABORTED' || err.message === 'Network Error') {
+        setError('No se pudo conectar con el servidor. Verifique su conexión o intente más tarde.');
+      } else {
+        const mensaje = err.response?.data?.message || 'Error al iniciar sesión.';
+        setError(mensaje);
+      }
     } finally {
       setCargando(false);
     }

@@ -3,6 +3,8 @@ import { API_URL, TOKEN_KEY } from '../config';
 
 const api = axios.create({
   baseURL: API_URL,
+  // Evita que la app se quede "pensando" si el servidor no responde.
+  timeout: 15000,
 });
 
 api.interceptors.request.use((config) => {
