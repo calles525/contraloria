@@ -9,6 +9,36 @@ interface RespuestaItem<T> {
   data: T;
 }
 
+/** Datos para crear/actualizar: la solicitud más los archivos a adjuntar. */
+export type DatosCrearSolicitudConArchivos = DatosCrearSolicitud & {
+  archivos?: Record<string, File>;
+};
+
+/**
+ * Construye el FormData multipart de una solicitud.
+ * El JSON viaja en el campo "datos", los nombres de los requerimientos con
+ * archivo en "nombres_archivos" y los archivos en el campo "archivos".
+ */
+function construirFormData(datos: DatosCrearSolicitudConArchivos): FormData {
+  const { archivos, ...payload } = datos;
+  const formData = new FormData();
+  formData.append('datos', JSON.stringify(payload));
+
+  const nombres: string[] = [];
+  for (const requerimiento of payload.requerimientos ?? []) {
+    const archivo = archivos?.[requerimiento.nombre];
+    if (archivo) {
+      nombres.push(requerimiento.nombre);
+      formData.append('archivos', archivo);
+    }
+  }
+  if (nombres.length > 0) {
+    formData.append('nombres_archivos', JSON.stringify(nombres));
+  }
+
+  return formData;
+}
+
 export interface FiltrosSolicitudes {
   estado?: string;
   categoria?: string;
@@ -38,15 +68,19 @@ export const solicitudesApi = {
       })
       .then((r) => r.data.data),
 
-  crear: (datos: DatosCrearSolicitud): Promise<Solicitud> =>
-    api
-      .post<RespuestaItem<Solicitud>>('/solicitudes', datos as unknown as Record<string, unknown>)
-      .then((r) => r.data.data),
+  crear: (datos: DatosCrearSolicitudConArchivos): Promise<Solicitud> => {
+    const formData = construirFormData(datos);
+    return api
+      .post<RespuestaItem<Solicitud>>('/solicitudes', formData)
+      .then((r) => r.data.data);
+  },
 
-  actualizar: (id: number, datos: Partial<DatosCrearSolicitud>): Promise<Solicitud> =>
-    api
-      .put<RespuestaItem<Solicitud>>(`/solicitudes/${id}`, datos as unknown as Record<string, unknown>)
-      .then((r) => r.data.data),
+  actualizar: (id: number, datos: DatosCrearSolicitudConArchivos): Promise<Solicitud> => {
+    const formData = construirFormData(datos);
+    return api
+      .put<RespuestaItem<Solicitud>>(`/solicitudes/${id}`, formData)
+      .then((r) => r.data.data);
+  },
 
   eliminar: (id: number) => api.delete(`/solicitudes/${id}`),
 
@@ -60,9 +94,9 @@ export const solicitudesApi = {
       .post<RespuestaItem<Solicitud>>(`/solicitudes/${id}/regresar`, { nota })
       .then((r) => r.data.data),
 
-  rechazar: (id: number, motivo: string): Promise<Solicitud> =>
+  reenviar: (id: number, nota?: string): Promise<Solicitud> =>
     api
-      .post<RespuestaItem<Solicitud>>(`/solicitudes/${id}/rechazar`, { nota: motivo })
+      .post<RespuestaItem<Solicitud>>(`/solicitudes/${id}/reenviar`, { nota })
       .then((r) => r.data.data),
 
   validar: (id: number, nota?: string): Promise<Solicitud> =>

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { login, guardarToken } from '../services/auth';
+import { login } from '../services/auth';
+import { useSesion } from '../providers/SesionProvider';
 import logo from '../assets/image/grupo_botalon.jpg';
 
 export default function Login() {
@@ -9,6 +10,7 @@ export default function Login() {
   const [error, setError] = useState('');
   const [cargando, setCargando] = useState(false);
   const navigate = useNavigate();
+  const { iniciarSesion } = useSesion();
 
   async function manejarEnvio(e: React.FormEvent) {
     e.preventDefault();
@@ -22,7 +24,7 @@ export default function Login() {
     setCargando(true);
     try {
       const data = await login(username, password);
-      guardarToken(data.token);
+      iniciarSesion(data.token);
       navigate('/');
     } catch (err: any) {
       const mensaje = err.response?.data?.message || 'Error al iniciar sesión.';

@@ -6,15 +6,42 @@ import {
   eliminarSolicitud,
   procesarSolicitud,
   regresarSolicitud,
-  rechazarSolicitud,
+  reenviarSolicitud,
   validarSolicitud,
   agregarNotaSolicitud,
   adjuntarArchivoRequerimiento,
   obtenerArchivoRequerimiento,
   quitarArchivoRequerimiento,
+  obtenerResumenDashboard,
 } from '../services/solicitudes.service.js';
 import { registrarBitacora } from '../services/bitacora.service.js';
 import { notificarActividadSolicitudes } from '../services/notificaciones.service.js';
+import {
+  enviarWhatsAppADestinatariosDepartamento,
+  enviarWhatsAppASolicitante,
+} from '../services/whatsapp.service.js';
+
+/**
+ * Desempaqueta la petición de crear/actualizar una solicitud.
+ * Admite dos formatos:
+ *  - JSON puro (sin archivos): el cuerpo ES el objeto de la solicitud.
+ *  - multipart (con archivos): el JSON viaja en el campo "datos", la lista de
+ *    nombres de requerimientos con archivo en "nombres_archivos" y los
+ *    archivos en el campo "archivos" (en el mismo orden).
+ */
+function extraerSolicitudYArchivos(req) {
+  const cuerpo = req.body || {};
+
+  if (typeof cuerpo.datos === 'string') {
+    const nombres = JSON.parse(cuerpo.nombres_archivos || '[]');
+    const archivos = (Array.isArray(nombres) ? nombres : [])
+      .map((nombre, indice) => ({ nombre, archivo: req.files?.[indice] }))
+      .filter((item) => item.archivo);
+    return { datos: JSON.parse(cuerpo.datos || '{}'), archivos };
+  }
+
+  return { datos: cuerpo, archivos: [] };
+}
 
 /** Registra en bitácora y notifica un cambio de estado de una solicitud. */
 async function registrarEstadoSolicitud({ req, solicitud, accion, verbo }) {
@@ -33,6 +60,40 @@ async function registrarEstadoSolicitud({ req, solicitud, accion, verbo }) {
     titulo: `Solicitud ${numero}`,
     mensaje: `La solicitud ${numero} quedó en estado "${solicitud.estado}" por ${req.user.username}.`,
     origenUserId: req.user.id,
+    departmentId: solicitud.department_id ?? null,
+  });
+
+  // Aviso por WhatsApp a la persona que realizó la solicitud.
+  notificarWhatsAppSolicitante({ req, solicitud, accion });
+}
+
+const MENSAJES_WHATSAPP_POR_ACCION = {
+  procesar: 'está EN PROCESO y será atendida por el departamento correspondiente.',
+  regresar: 'fue DEVUELTA. Revise las observaciones y realice los ajustes necesarios.',
+  validar: 'fue VALIDADA correctamente.',
+};
+
+/** Avisa por WhatsApp a quien realizó la solicitud cuando cambia su estado. */
+function notificarWhatsAppSolicitante({ req, solicitud, accion }) {
+  const texto = MENSAJES_WHATSAPP_POR_ACCION[accion];
+  if (!texto || !solicitud.solicitante_user_id) return;
+  const numero = solicitud.numero || `#${solicitud.id}`;
+  enviarWhatsAppASolicitante({
+    userId: solicitud.solicitante_user_id,
+    mensaje: `Hola ${solicitud.solicitante_nombre}. Su solicitud ${numero} (${solicitud.categoria}) ${texto}`,
+  });
+}
+
+/** Avisa por WhatsApp a los destinatarios configurados del departamento destino. */
+function notificarWhatsAppDepartamento({ req, solicitud, mensaje }) {
+  if (!solicitud.department_id) return;
+  const numero = solicitud.numero || `#${solicitud.id}`;
+  enviarWhatsAppADestinatariosDepartamento({
+    departmentId: solicitud.department_id,
+    origenUserId: req.user.id,
+    mensaje:
+      mensaje ||
+      `Nueva solicitud ${numero} (${solicitud.categoria}) creada por ${req.user.username}. Queda pendiente de gestión en su departamento.`,
   });
 }
 
@@ -40,6 +101,15 @@ async function listar(req, res, next) {
   try {
     const solicitudes = await listarSolicitudes(req.query, req.user.id);
     res.json({ data: solicitudes });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function resumen(req, res, next) {
+  try {
+    const resumen = await obtenerResumenDashboard(req.query);
+    res.json({ data: resumen });
   } catch (error) {
     next(error);
   }
@@ -62,7 +132,8 @@ async function obtener(req, res, next) {
 
 async function crear(req, res, next) {
   try {
-    const solicitud = await crearSolicitud(req.body || {}, req.user.id);
+    const { datos, archivos } = extraerSolicitudYArchivos(req);
+    const solicitud = await crearSolicitud(datos, req.user.id, archivos);
 
     registrarBitacora({
       usuarioId: req.user.id,
@@ -78,7 +149,11 @@ async function crear(req, res, next) {
       titulo: `Solicitud ${solicitud.numero}`,
       mensaje: `Se creó la solicitud ${solicitud.numero} (${solicitud.categoria}) por ${req.user.username}.`,
       origenUserId: req.user.id,
+      departmentId: solicitud.department_id ?? null,
     });
+
+    // Aviso por WhatsApp a los destinatarios del departamento destino.
+    notificarWhatsAppDepartamento({ req, solicitud });
 
     res.status(201).json({ data: solicitud });
   } catch (error) {
@@ -88,7 +163,8 @@ async function crear(req, res, next) {
 
 async function actualizar(req, res, next) {
   try {
-    const solicitud = await actualizarSolicitud(Number(req.params.id), req.body || {}, req.user.id);
+    const { datos, archivos } = extraerSolicitudYArchivos(req);
+    const solicitud = await actualizarSolicitud(Number(req.params.id), datos, req.user.id, archivos);
 
     registrarBitacora({
       usuarioId: req.user.id,
@@ -137,6 +213,15 @@ async function procesar(req, res, next) {
       req.body?.nota
     );
     await registrarEstadoSolicitud({ req, solicitud, accion: 'procesar', verbo: 'Procesó' });
+
+    // Se avisa por WhatsApp a los destinatarios del departamento destino:
+    // la solicitud quedó en proceso y será gestionada.
+    notificarWhatsAppDepartamento({
+      req,
+      solicitud,
+      mensaje: `La solicitud ${solicitud.numero || `#${solicitud.id}`} (${solicitud.categoria}) fue puesta EN PROCESO por ${req.user.username}. Queda para gestión en su departamento.`,
+    });
+
     res.json({ data: solicitud });
   } catch (error) {
     next(error);
@@ -157,14 +242,22 @@ async function regresar(req, res, next) {
   }
 }
 
-async function rechazar(req, res, next) {
+async function reenviar(req, res, next) {
   try {
-    const solicitud = await rechazarSolicitud(
+    const solicitud = await reenviarSolicitud(
       Number(req.params.id),
       req.user.id,
       req.body?.nota
     );
-    await registrarEstadoSolicitud({ req, solicitud, accion: 'rechazar', verbo: 'Rechazó' });
+    await registrarEstadoSolicitud({ req, solicitud, accion: 'reenviar', verbo: 'Reenvió' });
+
+    // Se avisa por WhatsApp al departamento destino: la solicitud volvió a quedar pendiente.
+    notificarWhatsAppDepartamento({
+      req,
+      solicitud,
+      mensaje: `La solicitud ${solicitud.numero || `#${solicitud.id}`} fue reenviada por ${req.user.username} y quedó PENDIENTE de gestión en su departamento.`,
+    });
+
     res.json({ data: solicitud });
   } catch (error) {
     next(error);
@@ -237,6 +330,7 @@ async function subirArchivo(req, res, next) {
       titulo: `Documento adjuntado`,
       mensaje: `Se adjuntó "${req.file.originalname}" a la solicitud ${solicitud.numero} por ${req.user.username}.`,
       origenUserId: req.user.id,
+      departmentId: solicitud.department_id ?? null,
     });
 
     res.json({ data: solicitud });
@@ -295,12 +389,13 @@ async function quitarArchivo(req, res, next) {
 export const solicitudesController = {
   listar,
   obtener,
+  resumen,
   crear,
   actualizar,
   eliminar,
   procesar,
   regresar,
-  rechazar,
+  reenviar,
   validar,
   agregarNota,
   subirArchivo,

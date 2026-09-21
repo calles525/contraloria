@@ -1,43 +1,87 @@
 import { pool } from '../config/db.js';
+import { emitirNotificaciones } from '../sockets/index.js';
 
 /**
- * Crea una notificación para cada usuario activo con permiso de solicitudes.
+ * Crea una notificación para los usuarios con permiso de solicitudes y para
+ * los usuarios que trabajan en el departamento destino de la solicitud.
  * Si la generación falla se registra en consola, sin interrumpir la operación principal.
  *
- * @param {object} datos { tipo, titulo, mensaje, origenUserId }
+ * @param {object} datos { tipo, titulo, mensaje, origenUserId, departmentId }
  */
 export async function notificarActividadSolicitudes({
   tipo,
   titulo,
   mensaje,
   origenUserId = null,
+  departmentId = null,
 }) {
   try {
-    const [destinatarios] = await pool.execute(
-      `SELECT DISTINCT u.id
-       FROM users u
-       JOIN user_permissions up ON up.user_id = u.id
-       JOIN permissions p ON p.id = up.permission_id
-       WHERE u.is_active = 1 AND p.code = 'solicitudes'`
-    );
+    const destinatarios = await obtenerDestinatariosSolicitud(departmentId);
 
     if (destinatarios.length === 0) return;
 
     const valores = destinatarios.map((destinatario) => [
-      destinatario.id,
+      destinatario,
       tipo,
       titulo,
       mensaje,
       origenUserId,
     ]);
 
-    await pool.query(
+    const resultado = await pool.query(
       'INSERT INTO notificaciones (user_id, tipo, titulo, mensaje, origen_user_id) VALUES ?',
       [valores]
+    );
+
+    // Los ids asignados por MySQL son consecutivos en un INSERT múltiple.
+    const insertId = Number(resultado[0]?.insertId) || 0;
+    const creadas = destinatarios.map((userId, indice) => ({
+      id: insertId + indice,
+      tipo,
+      titulo,
+      mensaje,
+      leida: false,
+      created_at: new Date().toISOString(),
+    }));
+
+    emitirNotificaciones(
+      creadas.map((notificacion, indice) => ({
+        userId: destinatarios[indice],
+        notificacion,
+      }))
     );
   } catch (error) {
     console.error('No se pudo crear la notificación:', error.message);
   }
+}
+
+/** Devuelve los ids de usuarios a notificar: con permiso de solicitudes y/o del departamento destino. */
+async function obtenerDestinatariosSolicitud(departmentId) {
+  let ids = new Set();
+
+  // Usuarios activos con permisos del módulo de solicitudes (solicitantes y gestores del proceso).
+  const [gestores] = await pool.execute(
+    `SELECT DISTINCT u.id
+     FROM users u
+     JOIN user_permissions up ON up.user_id = u.id
+     JOIN permissions p ON p.id = up.permission_id
+     WHERE u.is_active = 1 AND p.code IN ('solicitudes', 'crear_solicitudes', 'gestionar_solicitudes')`
+  );
+  for (const gestor of gestores) ids.add(gestor.id);
+
+  // Usuarios activos que trabajan en el departamento destino de la solicitud.
+  if (departmentId) {
+    const [delDepartamento] = await pool.execute(
+      `SELECT DISTINCT u.id
+       FROM users u
+       JOIN employees e ON e.person_id = u.person_id
+       WHERE u.is_active = 1 AND e.department_id = ?`,
+      [departmentId]
+    );
+    for (const usuario of delDepartamento) ids.add(usuario.id);
+  }
+
+  return [...ids];
 }
 
 /** Devuelve las notificaciones recientes de un usuario y el total de no leídas. */

@@ -5,6 +5,7 @@ node_modules/
 # Entorno
 .env
 .env.local
+.env.production
 
 # Builds
 dist/
@@ -14,6 +15,11 @@ build/
 *.log
 npm-debug.log*
 pnpm-debug.log*
+
+# Archivos de trabajo temporales
+promp.txt
+~$*.docx
+*.tsbuildinfo
 
 # Sistema
 .DS_Store

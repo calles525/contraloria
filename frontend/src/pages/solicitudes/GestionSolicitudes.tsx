@@ -73,7 +73,7 @@ export default function GestionSolicitudes() {
 
   /** Ejecuta una acción de gestión sobre la solicitud abierta. */
   async function manejarAccionGestion(
-    tipo: 'procesar' | 'regresar' | 'rechazar' | 'validar' | 'nota',
+    tipo: 'procesar' | 'regresar' | 'validar' | 'nota',
     nota: string
   ) {
     if (!solicitudGestion) return;
@@ -86,10 +86,6 @@ export default function GestionSolicitudes() {
       case 'regresar':
         actualizada = await solicitudesApi.regresar(solicitudGestion.id, nota);
         notificarExito('Solicitud devuelta.');
-        break;
-      case 'rechazar':
-        actualizada = await solicitudesApi.rechazar(solicitudGestion.id, nota);
-        notificarExito('Solicitud rechazada.');
         break;
       case 'validar':
         actualizada = await solicitudesApi.validar(solicitudGestion.id, nota);
@@ -188,8 +184,8 @@ export default function GestionSolicitudes() {
             Gestión de solicitudes
           </h1>
           <p className="mt-2 text-theme-sm text-gray-500 dark:text-gray-400">
-            Dé seguimiento a las solicitudes: inícielas, devuélvalas, rechácelas o valídelas, y
-            revise los documentos adjuntos.
+            Dé seguimiento a las solicitudes: inícielas, devuélvalas o valídelas, y revise los
+            documentos adjuntos y las observaciones.
           </p>
         </div>
 

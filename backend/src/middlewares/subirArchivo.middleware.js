@@ -59,3 +59,38 @@ export function subirArchivoRequerimiento(req, res, next) {
     return next(error);
   });
 }
+
+// ---------------------------------------------------------------------------
+// Subida de archivos al crear o actualizar una solicitud (multipart atómico)
+// ---------------------------------------------------------------------------
+
+const subidaMemoria = multer({
+  storage: multer.memoryStorage(),
+  fileFilter: (req, file, callback) => {
+    const ext = path.extname(file.originalname || '').toLowerCase().replace('.', '');
+    if (!EXTENSIONES_PERMITIDAS.has(ext)) {
+      return callback(crearError(400, `Tipo de archivo no permitido (${ext || 'desconocido'}).`));
+    }
+    callback(null, true);
+  },
+  limits: { fileSize: TAMANO_MAXIMO, files: 12 },
+});
+
+/**
+ * Middleware Multer para crear/actualizar solicitudes.
+ * Acepta el JSON de la solicitud en el campo "datos", los nombres de los
+ * requerimientos con archivo en "nombres_archivos" y los archivos en "archivos".
+ * Usa memoria porque el id de la solicitud aún no existe al recibir el request.
+ */
+export function subirArchivosSolicitud(req, res, next) {
+  subidaMemoria.array('archivos', 12)(req, res, (error) => {
+    if (!error) return next();
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return next(crearError(400, 'Un archivo supera el tamaño máximo de 10 MB.'));
+    }
+    if (error.code === 'LIMIT_FILE_COUNT') {
+      return next(crearError(400, 'Se superó el máximo de 12 archivos adjuntos.'));
+    }
+    return next(error);
+  });
+}

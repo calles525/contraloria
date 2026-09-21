@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { protegerRuta } from '../middlewares/auth.middleware.js';
 import { requierePermiso } from '../middlewares/permisos.middleware.js';
-import { subirArchivoRequerimiento } from '../middlewares/subirArchivo.middleware.js';
+import {
+  subirArchivoRequerimiento,
+  subirArchivosSolicitud,
+} from '../middlewares/subirArchivo.middleware.js';
 import { solicitudesController } from '../controllers/solicitudes.controller.js';
 
 const router = Router();
@@ -10,6 +13,11 @@ const router = Router();
 router.use(protegerRuta);
 
 // Lectura: la pueden ver quienes crean solicitudes y quienes las gestionan.
+router.get(
+  '/solicitudes/resumen',
+  requierePermiso('crear_solicitudes', 'gestionar_solicitudes'),
+  solicitudesController.resumen
+);
 router.get(
   '/solicitudes',
   requierePermiso('crear_solicitudes', 'gestionar_solicitudes'),
@@ -22,10 +30,17 @@ router.get(
 );
 
 // Escritura de solicitudes: solo quienes tienen permiso de creación.
-router.post('/solicitudes', requierePermiso('crear_solicitudes'), solicitudesController.crear);
+// Los documentos requeridos viajan en el mismo multipart (campo "archivos").
+router.post(
+  '/solicitudes',
+  requierePermiso('crear_solicitudes'),
+  subirArchivosSolicitud,
+  solicitudesController.crear
+);
 router.put(
   '/solicitudes/:id',
   requierePermiso('crear_solicitudes'),
+  subirArchivosSolicitud,
   solicitudesController.actualizar
 );
 router.delete(
@@ -45,10 +60,11 @@ router.post(
   requierePermiso('gestionar_solicitudes'),
   solicitudesController.regresar
 );
+// Reenvío de una solicitud devuelta: lo hace el solicitante (el servicio valida que sea dueño).
 router.post(
-  '/solicitudes/:id/rechazar',
-  requierePermiso('gestionar_solicitudes'),
-  solicitudesController.rechazar
+  '/solicitudes/:id/reenviar',
+  requierePermiso('crear_solicitudes', 'gestionar_solicitudes'),
+  solicitudesController.reenviar
 );
 router.post(
   '/solicitudes/:id/validar',

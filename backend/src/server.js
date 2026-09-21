@@ -1,6 +1,8 @@
 import './config/env.js';
+import http from 'node:http';
 import app from './app.js';
 import { pool } from './config/db.js';
+import { iniciarSocketServer } from './sockets/index.js';
 
 const PORT = process.env.PORT || 9999;
 
@@ -10,7 +12,10 @@ async function iniciar() {
     console.log('Conexión a MySQL establecida.');
 
     const HOST = process.env.HOST || '0.0.0.0';
-    app.listen(PORT, HOST, () => {
+    const servidorHttp = http.createServer(app);
+    iniciarSocketServer(servidorHttp);
+
+    servidorHttp.listen(PORT, HOST, () => {
       console.log(`API de Contraloría escuchando en http://${HOST}:${PORT}`);
     });
   } catch (error) {

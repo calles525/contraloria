@@ -1,6 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import Swal from 'sweetalert2';
 import { notificacionesApi, Notificacion } from '../../services/notificaciones';
+import {
+  conectarSocket,
+  desconectarSocket,
+  NotificacionSocket,
+} from '../../services/notificacionesSocket';
+import { obtenerToken } from '../../services/auth';
+import { reproducirSonidoNotificacion } from '../../utils/sonidoNotificacion';
+
+// Toast con la apariencia de TailAdmin (claro y oscuro).
+const toastNotificacion = Swal.mixin({
+  toast: true,
+  position: 'top-end',
+  showConfirmButton: false,
+  timer: 6000,
+  timerProgressBar: true,
+  customClass: {
+    popup:
+      '!rounded-2xl !border !border-gray-200 !bg-white !px-4 !py-3 !text-gray-800 !shadow-theme-lg dark:!border-gray-800 dark:!bg-gray-900 dark:!text-white/90',
+  },
+});
 
 interface IconoNotificacion {
   clase: string;
@@ -92,6 +113,26 @@ export default function NotificacionesDropdown() {
       activo = false;
       window.clearInterval(intervalo);
     };
+  }, []);
+
+  // Canal en tiempo real: nueva notificación -> badge, toast y sonido.
+  useEffect(() => {
+    const token = obtenerToken();
+    if (!token) return;
+
+    const alRecibirNueva = (notificacion: NotificacionSocket) => {
+      setNoLeidas((actual) => actual + 1);
+      reproducirSonidoNotificacion();
+      toastNotificacion.fire({
+        icon: 'info',
+        iconHtml: '<span class="sr-only">Notificación</span>',
+        title: notificacion.titulo,
+        text: notificacion.mensaje,
+      });
+    };
+
+    conectarSocket(token, alRecibirNueva);
+    return () => desconectarSocket();
   }, []);
 
   // Al abrir el panel se cargan las notificaciones y se marcan como leídas.

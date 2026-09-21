@@ -195,7 +195,7 @@ export default function Sidebar({ colapsado, movilAbierto, alCerrarMovil }: Prop
   const solicitudesAbierto = enSolicitudes || solicitudesManual || movilAbierto;
 
   // Solo se muestran los sub-ítems cuyo permiso tiene el usuario autenticado.
-  const itemsPermitidos = itemsConfiguracion.filter((item) => permisos.includes(item.permiso));
+  const itemsPermitidos = itemsConfiguracion.filter((item) => !item.permiso || permisos.includes(item.permiso));
   const itemsSolicitudPermitidos = itemsSolicitudes.filter((item) =>
     permisos.includes(item.permiso)
   );
@@ -560,6 +560,63 @@ export default function Sidebar({ colapsado, movilAbierto, alCerrarMovil }: Prop
             </ul>
           </div>
           )}
+
+          {/* Grupo Notificaciones (visible para todos los usuarios) */}
+          <div>
+            <h3 className="mb-4 text-xs uppercase leading-[20px] text-gray-400">
+              <span className={colapsado ? 'menu-group-title lg:hidden' : 'menu-group-title'}>
+                Notificaciones
+              </span>
+              <svg
+                className={`mx-auto h-6 w-6 fill-current ${
+                  colapsado ? 'menu-group-icon hidden lg:block' : 'hidden'
+                }`}
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  fillRule="evenodd"
+                  clipRule="evenodd"
+                  d="M5.99915 10.2451C6.96564 10.2451 7.74915 11.0286 7.74915 11.9951V12.0051C7.74915 12.9716 6.96564 13.7551 5.99915 13.7551C5.03265 13.7551 4.24915 12.9716 4.24915 12.0051V11.9951C4.24915 11.0286 5.03265 10.2451 5.99915 10.2451ZM17.9991 10.2451C18.9656 10.2451 19.7491 11.0286 19.7491 11.9951V12.0051C19.7491 12.9716 18.9656 13.7551 17.9991 13.7551C17.0326 13.7551 16.2491 12.9716 16.2491 12.0051V11.9951C16.2491 11.0286 17.0326 10.2451 17.9991 10.2451ZM13.7491 11.9951C13.7491 11.0286 12.9656 10.2451 11.9991 10.2451C11.0326 10.2451 10.2491 11.0286 10.2491 11.9951V12.0051C10.2491 12.9716 11.0326 13.7551 11.9991 13.7551C12.9656 13.7551 13.7491 12.9716 13.7491 12.0051V11.9951Z"
+                  fill=""
+                />
+              </svg>
+            </h3>
+
+            <ul className="mb-6 flex flex-col gap-1">
+              <li>
+                <NavLink
+                  to="/configuracion/notificaciones"
+                  onClick={alCerrarMovil}
+                  className={({ isActive }) =>
+                    `menu-item group ${isActive ? 'menu-item-active' : 'menu-item-inactive'}`
+                  }
+                >
+                  {({ isActive }) => (
+                    <>
+                      <svg
+                        className={
+                          isActive ? 'menu-item-icon-active' : 'menu-item-icon-inactive'
+                        }
+                        width="24"
+                        height="24"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                      >
+                        <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+                        <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+                      </svg>
+                      <span className={`menu-item-text ${colapsado ? 'lg:hidden' : ''}`}>
+                        Configuración de Evolution
+                      </span>
+                    </>
+                  )}
+                </NavLink>
+              </li>
+            </ul>
+          </div>
         </nav>
       </div>
     </aside>

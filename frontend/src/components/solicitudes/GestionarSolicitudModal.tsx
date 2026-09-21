@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Modal from '../crud/Modal';
 import VistaPreviaDocumento from './VistaPreviaDocumento';
+import SelectorCamposErroneos, { OpcionCampo } from '../ui/SelectorCamposErroneos';
 import {
+  CAMPOS_POR_CATEGORIA,
   ESTILO_ESTADO,
   ESTILO_TIPO,
   Solicitud,
@@ -12,7 +14,7 @@ interface PropsGestionarSolicitudModal {
   solicitud: Solicitud;
   alCerrar: () => void;
   onAccion: (
-    tipo: 'procesar' | 'regresar' | 'rechazar' | 'validar' | 'nota',
+    tipo: 'procesar' | 'regresar' | 'validar' | 'nota',
     nota: string
   ) => Promise<void>;
   onAdjuntarArchivo: (reqId: number, archivo: File) => Promise<void>;
@@ -43,12 +45,21 @@ function formatearFecha(fecha: string | null): string {
   });
 }
 
+/** Convierte un valor de la solicitud a texto corto para mostrarlo en la opción. */
+function formatearValorCampo(valor: unknown): string {
+  if (valor === null || valor === undefined || valor === '') return '';
+  if (typeof valor === 'boolean') return valor ? 'Sí' : 'No';
+  if (Array.isArray(valor)) return valor.join(', ');
+  return String(valor);
+}
+
 const ESTILO_NOTAS: Record<TipoNota, string> = {
   NOTA: 'bg-gray-100 text-gray-600 dark:bg-white/[0.08] dark:text-gray-300',
   PROCESAR: 'bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-400',
   REGRESAR: 'bg-warning-100 text-warning-600 dark:bg-warning-500/15 dark:text-warning-400',
   RECHAZAR: 'bg-error-100 text-error-600 dark:bg-error-500/15 dark:text-error-500',
   VALIDAR: 'bg-success-100 text-success-600 dark:bg-success-500/15 dark:text-success-500',
+  REENVIAR: 'bg-brand-100 text-brand-600 dark:bg-brand-500/15 dark:text-brand-400',
 };
 
 const ETIQUETA_NOTAS: Record<TipoNota, string> = {
@@ -57,6 +68,7 @@ const ETIQUETA_NOTAS: Record<TipoNota, string> = {
   REGRESAR: 'Devuelta',
   RECHAZAR: 'Rechazo',
   VALIDAR: 'Validación',
+  REENVIAR: 'Reenvío',
 };
 
 export default function GestionarSolicitudModal({
@@ -74,11 +86,44 @@ export default function GestionarSolicitudModal({
   const [error, setError] = useState('');
   const [vistaPrevia, setVistaPrevia] = useState<{ blob: Blob; nombre: string } | null>(null);
   const [tabActivo, setTabActivo] = useState<'historial' | 'vistaPrevia'>('historial');
-  const [motivoAccion, setMotivoAccion] = useState<'regresar' | 'rechazar' | null>(null);
+  const [motivoAccion, setMotivoAccion] = useState<'regresar' | null>(null);
+  /** Campos de la solicitud marcados como erróneos (motivo de regreso). */
+  const [camposErrores, setCamposErrores] = useState<string[]>([]);
+  /** Comentario adicional opcional junto a los campos marcados. */
   const [textoMotivo, setTextoMotivo] = useState('');
 
   const estado = solicitud.estado;
   const esTerminal = estado === 'RECHAZADA' || estado === 'VALIDADA';
+
+  /** Campos de la solicitud disponibles para marcar como erróneos (solo los del formulario). */
+  const opcionesCampos = useMemo<OpcionCampo[]>(() => {
+    const definidos = CAMPOS_POR_CATEGORIA[solicitud.categoria] ?? [];
+    const opciones: OpcionCampo[] = [];
+
+    // Campos dinámicos según la categoría (con la etiqueta legible del formulario).
+    const datos = solicitud.datos ?? {};
+    for (const campo of definidos) {
+      const valor = datos[campo.nombre];
+      const texto = formatearValorCampo(valor);
+      if (!texto) continue;
+      opciones.push({
+        valor: `datos.${campo.nombre}`,
+        etiqueta: campo.etiqueta,
+        valorActual: texto,
+      });
+    }
+
+    // Documentos requeridos (cuando la categoría exige adjuntos).
+    for (const req of solicitud.requerimientos ?? []) {
+      opciones.push({
+        valor: `req.${req.id ?? req.nombre}`,
+        etiqueta: req.nombre,
+        valorActual: req.archivo_nombre ?? (req.cumplido ? 'Cumplido' : 'Sin adjuntar'),
+      });
+    }
+
+    return opciones;
+  }, [solicitud]);
 
   /** Muestra el documento adjunto en el tab "Vista previa". */
   async function manejarVer(reqId: number) {
@@ -101,7 +146,7 @@ export default function GestionarSolicitudModal({
   }
 
   async function ejecutarAccion(
-    tipo: 'procesar' | 'regresar' | 'rechazar' | 'validar' | 'nota',
+    tipo: 'procesar' | 'regresar' | 'validar' | 'nota',
     nota: string
   ) {
     setError('');
@@ -110,6 +155,7 @@ export default function GestionarSolicitudModal({
       await onAccion(tipo, nota);
       setNotaSeguimiento('');
       setMotivoAccion(null);
+      setCamposErrores([]);
       setTextoMotivo('');
     } catch {
       setError('No se pudo completar la acción. Intente de nuevo.');
@@ -118,20 +164,29 @@ export default function GestionarSolicitudModal({
     }
   }
 
-  /** Pide el motivo antes de regresar o rechazar una solicitud, dentro del propio modal. */
-  function pedirMotivo(tipo: 'regresar' | 'rechazar') {
+  /** Pide el motivo antes de regresar una solicitud, dentro del propio modal. */
+  function pedirMotivo() {
+    setCamposErrores([]);
     setTextoMotivo('');
-    setMotivoAccion(tipo);
+    setMotivoAccion('regresar');
   }
 
-  /** Confirma la acción de regresar/rechazar con el motivo escrito. */
+  /** Etiqueta legible de una opción de campo seleccionada. */
+  function etiquetaCampo(valor: string): string {
+    return opcionesCampos.find((opcion) => opcion.valor === valor)?.etiqueta ?? valor;
+  }
+
+  /** Confirma la acción de regresar con los campos erróneos marcados como motivo. */
   async function confirmarMotivo() {
     if (!motivoAccion) return;
-    const motivo = textoMotivo.trim();
-    if (!motivo) {
-      setError('El motivo es obligatorio.');
+    if (camposErrores.length === 0) {
+      setError('Debe seleccionar al menos un campo con error.');
       return;
     }
+    const listadoCampos = camposErrores.map(etiquetaCampo).join(', ');
+    const motivo = textoMotivo.trim()
+      ? `Campos con error: ${listadoCampos}. ${textoMotivo.trim()}`
+      : `Campos con error: ${listadoCampos}.`;
     await ejecutarAccion(motivoAccion, motivo);
   }
 
@@ -153,8 +208,6 @@ export default function GestionarSolicitudModal({
       'bg-brand-600 text-white hover:bg-brand-700 disabled:opacity-60',
     regresar:
       'border border-warning-200 bg-white text-warning-600 hover:bg-warning-50 dark:border-warning-500/20 dark:bg-warning-500/10 dark:text-warning-400',
-    rechazar:
-      'border border-error-200 bg-white text-error-600 hover:bg-error-50 dark:border-error-500/20 dark:bg-error-500/10 dark:text-error-500',
     validar:
       'bg-success-600 text-white hover:bg-success-700 disabled:opacity-60',
   };
@@ -528,18 +581,18 @@ export default function GestionarSolicitudModal({
         </div>
       </div>
 
-      {/* Nota de seguimiento */}
+      {/* Observaciones */}
       {!esTerminal && (
         <div className="mb-5">
           <label className="mb-2 block text-theme-sm font-medium text-gray-700 dark:text-gray-400">
-            Nota de seguimiento
+            Observaciones
           </label>
           <div className="flex flex-col gap-2 sm:flex-row">
             <textarea
               value={notaSeguimiento}
               onChange={(e) => setNotaSeguimiento(e.target.value)}
               rows={2}
-              placeholder="Escriba una nota (opcional)"
+              placeholder="Escriba una observación (opcional)"
               className={`${claseInput} resize-none sm:flex-1`}
             />
             <button
@@ -560,25 +613,35 @@ export default function GestionarSolicitudModal({
           {motivoAccion ? (
             <div>
               <p className="mb-2.5 text-theme-sm font-semibold text-gray-800 dark:text-white/90">
-                {motivoAccion === 'regresar'
-                  ? 'Motivo para regresar la solicitud'
-                  : 'Motivo para rechazar la solicitud'}
+                Motivo para regresar la solicitud
               </p>
+              <label className="mb-2 block text-theme-xs font-medium text-gray-500 dark:text-gray-400">
+                Seleccione los campos de la solicitud que están erróneos
+              </label>
+              <SelectorCamposErroneos
+                opciones={opcionesCampos}
+                seleccionados={camposErrores}
+                onChange={(valores) => {
+                  setCamposErrores(valores);
+                  if (error) setError('');
+                }}
+              />
               <textarea
                 value={textoMotivo}
                 onChange={(e) => {
                   setTextoMotivo(e.target.value);
                   if (error) setError('');
                 }}
-                rows={3}
-                placeholder="Indique el motivo…"
-                className={`${claseInput} resize-none`}
+                rows={2}
+                placeholder="Comentario adicional (opcional)…"
+                className={`${claseInput} mt-2.5 resize-none`}
               />
               <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => {
                     setMotivoAccion(null);
+                    setCamposErrores([]);
                     setTextoMotivo('');
                     setError('');
                   }}
@@ -591,19 +654,9 @@ export default function GestionarSolicitudModal({
                   type="button"
                   onClick={confirmarMotivo}
                   disabled={accionEnCurso !== null}
-                  className={`inline-flex items-center justify-center rounded-lg px-4 py-2.5 text-theme-sm font-medium text-white shadow-theme-xs disabled:opacity-60 ${
-                    motivoAccion === 'rechazar'
-                      ? 'bg-error-600 hover:bg-error-700'
-                      : 'bg-warning-600 hover:bg-warning-700'
-                  }`}
+                  className="inline-flex items-center justify-center rounded-lg bg-warning-600 px-4 py-2.5 text-theme-sm font-medium text-white shadow-theme-xs hover:bg-warning-700 disabled:opacity-60"
                 >
-                  {accionEnCurso === motivoAccion
-                    ? motivoAccion === 'rechazar'
-                      ? 'Rechazando…'
-                      : 'Regresando…'
-                    : motivoAccion === 'rechazar'
-                      ? 'Rechazar solicitud'
-                      : 'Regresar solicitud'}
+                  {accionEnCurso === 'regresar' ? 'Regresando…' : 'Regresar solicitud'}
                 </button>
               </div>
             </div>
@@ -619,32 +672,26 @@ export default function GestionarSolicitudModal({
                   {accionEnCurso === 'procesar' ? 'Procesando…' : 'Iniciar proceso'}
                 </button>
               )}
-              {(estado === 'PENDIENTE' || estado === 'EN PROCESO') && (
+              {estado === 'EN PROCESO' && (
                 <button
                   type="button"
-                  onClick={() => pedirMotivo('regresar')}
+                  onClick={() => pedirMotivo()}
                   disabled={accionEnCurso !== null}
                   className={claseBotonAccion(botones.regresar)}
                 >
                   {accionEnCurso === 'regresar' ? 'Regresando…' : 'Regresar'}
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => pedirMotivo('rechazar')}
-                disabled={accionEnCurso !== null}
-                className={claseBotonAccion(botones.rechazar)}
-              >
-                {accionEnCurso === 'rechazar' ? 'Rechazando…' : 'Rechazar'}
-              </button>
-              <button
-                type="button"
-                onClick={() => ejecutarAccion('validar', 'Solicitud validada.')}
-                disabled={accionEnCurso !== null}
-                className={claseBotonAccion(botones.validar)}
-              >
-                {accionEnCurso === 'validar' ? 'Validando…' : 'Validar'}
-              </button>
+              {estado === 'EN PROCESO' && (
+                <button
+                  type="button"
+                  onClick={() => ejecutarAccion('validar', 'Solicitud validada.')}
+                  disabled={accionEnCurso !== null}
+                  className={claseBotonAccion(botones.validar)}
+                >
+                  {accionEnCurso === 'validar' ? 'Validando…' : 'Validar'}
+                </button>
+              )}
             </div>
           )}
         </div>

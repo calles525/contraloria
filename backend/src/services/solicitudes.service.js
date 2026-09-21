@@ -23,7 +23,7 @@ export const CATEGORIAS_SOLICITUD = [
 ];
 
 const ESTADOS_TERMINALES = new Set(['RECHAZADA', 'VALIDADA']);
-const TIPOS_NOTA = new Set(['NOTA', 'REGRESAR', 'RECHAZAR', 'VALIDAR', 'PROCESAR']);
+const TIPOS_NOTA = new Set(['NOTA', 'REGRESAR', 'RECHAZAR', 'VALIDAR', 'PROCESAR', 'REENVIAR']);
 
 // ---------------------------------------------------------------------------
 // Consultas comunes
@@ -158,7 +158,7 @@ export async function obtenerSolicitud(id, opciones = {}) {
 // Creación y actualización
 // ---------------------------------------------------------------------------
 
-export async function crearSolicitud(datosEntrada, userId) {
+export async function crearSolicitud(datosEntrada, userId, archivos = []) {
   const { tipo_solicitud, categoria, empresa_id, cost_center_id, department_id,
           supervisor_person_id, datos, observaciones, requerimientos } = datosEntrada;
 
@@ -175,6 +175,7 @@ export async function crearSolicitud(datosEntrada, userId) {
   const numero = await generarNumeroSolicitud();
 
   const conexion = await pool.getConnection();
+  let archivosGuardados = [];
   try {
     await conexion.beginTransaction();
 
@@ -199,6 +200,10 @@ export async function crearSolicitud(datosEntrada, userId) {
 
     const solicitudId = resultado.insertId;
     await insertarRequerimientos(conexion, solicitudId, requerimientos);
+
+    // Adjunta los archivos elegidos en la misma petición (solicitud + documentos).
+    archivosGuardados = await adjuntarArchivosNuevos(conexion, solicitudId, archivos);
+
     await insertarNota(conexion, solicitudId, userId, 'NOTA', 'Solicitud creada.');
 
     await conexion.commit();
@@ -207,13 +212,17 @@ export async function crearSolicitud(datosEntrada, userId) {
     return formatearSolicitud(nuevas[0]);
   } catch (error) {
     await conexion.rollback();
+    // Si la transacción falla, se eliminan los archivos ya escritos en disco.
+    for (const ruta of archivosGuardados) {
+      fs.unlink(ruta, () => {});
+    }
     throw error;
   } finally {
     conexion.release();
   }
 }
 
-export async function actualizarSolicitud(id, datosEntrada, userId) {
+export async function actualizarSolicitud(id, datosEntrada, userId, archivos = []) {
   const solicitud = await obtenerSolicitud(id);
   if (!solicitud) {
     throw crearError(404, 'Solicitud no encontrada.');
@@ -243,6 +252,7 @@ export async function actualizarSolicitud(id, datosEntrada, userId) {
   }
 
   const conexion = await pool.getConnection();
+  let archivosGuardados = [];
   try {
     await conexion.beginTransaction();
 
@@ -264,11 +274,17 @@ export async function actualizarSolicitud(id, datosEntrada, userId) {
       await sincronizarRequerimientos(conexion, id, requerimientos);
     }
 
+    // Adjunta los archivos nuevos elegidos en la misma petición de actualización.
+    archivosGuardados = await adjuntarArchivosNuevos(conexion, id, archivos);
+
     await insertarNota(conexion, id, userId, 'NOTA', 'Solicitud actualizada.');
 
     await conexion.commit();
   } catch (error) {
     await conexion.rollback();
+    for (const ruta of archivosGuardados) {
+      fs.unlink(ruta, () => {});
+    }
     throw error;
   } finally {
     conexion.release();
@@ -299,26 +315,43 @@ export async function eliminarSolicitud(id) {
 
 export async function procesarSolicitud(id, userId, nota = '') {
   return cambiarEstadoConNota(id, userId, 'EN PROCESO', 'PROCESAR',
-    nota || 'Solicitud en proceso.', true);
+    nota || 'Solicitud en proceso.', true, ['PENDIENTE', 'DEVUELTA']);
 }
 
 export async function regresarSolicitud(id, userId, nota) {
   if (!nota || !nota.trim()) {
     throw crearError(400, 'Debe indicar el motivo de la devolución.');
   }
-  return cambiarEstadoConNota(id, userId, 'DEVUELTA', 'REGRESAR', nota.trim());
-}
-
-export async function rechazarSolicitud(id, userId, motivo) {
-  if (!motivo || !motivo.trim()) {
-    throw crearError(400, 'Debe indicar el motivo del rechazo.');
-  }
-  return cambiarEstadoConNota(id, userId, 'RECHAZADA', 'RECHAZAR', motivo.trim());
+  return cambiarEstadoConNota(id, userId, 'DEVUELTA', 'REGRESAR', nota.trim(), false, ['EN PROCESO']);
 }
 
 export async function validarSolicitud(id, userId, nota = '') {
   return cambiarEstadoConNota(id, userId, 'VALIDADA', 'VALIDAR',
-    nota || 'Solicitud validada.', true);
+    nota || 'Solicitud validada.', true, ['EN PROCESO']);
+}
+
+export async function reenviarSolicitud(id, userId, nota = '') {
+  const solicitud = await obtenerSolicitudBase(id);
+  if (!solicitud) {
+    throw crearError(404, 'Solicitud no encontrada.');
+  }
+  if (ESTADOS_TERMINALES.has(solicitud.estado)) {
+    throw crearError(400, 'La solicitud está cerrada y no admite más cambios de estado.');
+  }
+  if (solicitud.estado !== 'DEVUELTA') {
+    throw crearError(400, 'Solo se puede reenviar una solicitud devuelta.');
+  }
+  if (Number(solicitud.solicitante_user_id) !== Number(userId)) {
+    throw crearError(403, 'Solo el solicitante puede reenviar su solicitud.');
+  }
+
+  return cambiarEstadoConNota(
+    id,
+    userId,
+    'PENDIENTE',
+    'REENVIAR',
+    nota || 'Solicitud reenviada por el solicitante.'
+  );
 }
 
 export async function agregarNotaSolicitud(id, userId, nota) {
@@ -355,6 +388,50 @@ const RAIZ_BACKEND = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 /** Convierte una ruta absoluta de un archivo subido en una ruta relativa a conservar en BD. */
 function rutaRelativa(rutaAbsoluta) {
   return path.relative(RAIZ_BACKEND, rutaAbsoluta).split(path.sep).join('/');
+}
+
+/**
+ * Guarda en disco y asocia los archivos recibidos al crear/actualizar una
+ * solicitud. Cada archivo viaja con el nombre del requerimiento que le
+ * corresponde. Devuelve las rutas absolutas escritas para limpiar en caso
+ * de rollback.
+ *
+ * @param {import('mysql2/promise').PoolConnection} conexion
+ * @param {number} solicitudId
+ * @param {Array<{ nombre: string, archivo: { buffer: Buffer, originalname: string } }>} archivos
+ */
+async function adjuntarArchivosNuevos(conexion, solicitudId, archivos) {
+  if (!Array.isArray(archivos) || archivos.length === 0) return [];
+
+  const [requerimientos] = await conexion.execute(
+    'SELECT id, nombre FROM solicitud_requerimientos WHERE solicitud_id = ?',
+    [solicitudId]
+  );
+  const idPorNombre = new Map(requerimientos.map((r) => [r.nombre, r.id]));
+
+  const carpeta = path.resolve(RAIZ_BACKEND, `uploads/solicitudes/${solicitudId}`);
+  fs.mkdirSync(carpeta, { recursive: true });
+
+  const escritos = [];
+  for (const { nombre, archivo } of archivos) {
+    const requerimientoId = idPorNombre.get(nombre);
+    if (!requerimientoId || !archivo?.buffer) continue;
+
+    const ext = path.extname(archivo.originalname || '').toLowerCase() || '.bin';
+    const archivoNombre = `archivo-${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
+    const ruta = path.join(carpeta, archivoNombre);
+
+    fs.writeFileSync(ruta, archivo.buffer);
+    await conexion.execute(
+      `UPDATE solicitud_requerimientos
+       SET cumplido = 1, archivo_nombre = ?, archivo_ruta = ?
+       WHERE id = ?`,
+      [archivo.originalname, rutaRelativa(ruta), requerimientoId]
+    );
+    escritos.push(ruta);
+  }
+
+  return escritos;
 }
 
 export async function adjuntarArchivoRequerimiento(solicitudId, requerimientoId, archivo) {
@@ -451,7 +528,15 @@ export async function quitarArchivoRequerimiento(solicitudId, requerimientoId) {
   return obtenerSolicitud(solicitudId);
 }
 
-async function cambiarEstadoConNota(id, userId, nuevoEstado, tipoNota, nota, permitirMismoEstado = false) {
+async function cambiarEstadoConNota(
+  id,
+  userId,
+  nuevoEstado,
+  tipoNota,
+  nota,
+  permitirMismoEstado = false,
+  estadosOrigen = null
+) {
   const solicitud = await obtenerSolicitudBase(id);
   if (!solicitud) {
     throw crearError(404, 'Solicitud no encontrada.');
@@ -462,6 +547,12 @@ async function cambiarEstadoConNota(id, userId, nuevoEstado, tipoNota, nota, per
   }
   if (!permitirMismoEstado && solicitud.estado === nuevoEstado) {
     throw crearError(400, `La solicitud ya está en estado "${nuevoEstado}".`);
+  }
+  if (estadosOrigen && !estadosOrigen.includes(solicitud.estado)) {
+    throw crearError(
+      400,
+      `Para esta acción la solicitud debe estar en estado ${estadosOrigen.join(' o ')} (actual: "${solicitud.estado}").`
+    );
   }
 
   const conexion = await pool.getConnection();
@@ -492,12 +583,158 @@ async function cambiarEstadoConNota(id, userId, nuevoEstado, tipoNota, nota, per
 }
 
 // ---------------------------------------------------------------------------
+// Resumen para el panel principal (dashboard)
+// ---------------------------------------------------------------------------
+
+/** Devuelve los indicadores y distribuciones que alimentan el dashboard. */
+export async function obtenerResumenDashboard(filtros = {}) {
+  const condiciones = [];
+  const valores = [];
+
+  if (filtros.estado && ESTADOS_SOLICITUD.includes(filtros.estado)) {
+    condiciones.push('s.estado = ?');
+    valores.push(filtros.estado);
+  }
+  if (filtros.categoria) {
+    condiciones.push('s.categoria = ?');
+    valores.push(filtros.categoria);
+  }
+  const departmentId = Number(filtros.department_id);
+  if (Number.isInteger(departmentId) && departmentId > 0) {
+    condiciones.push('s.department_id = ?');
+    valores.push(departmentId);
+  }
+  const donde = condiciones.length > 0 ? `WHERE ${condiciones.join(' AND ')}` : '';
+
+  const [filasEstado] = await pool.execute(
+    `SELECT s.estado, COUNT(*) AS total
+       FROM solicitudes s
+      ${donde}
+      GROUP BY s.estado`,
+    valores
+  );
+  const porEstado = Object.fromEntries(filasEstado.map((f) => [f.estado, Number(f.total)]));
+
+  const [filasCategoria] = await pool.execute(
+    `SELECT s.categoria, COUNT(*) AS total
+       FROM solicitudes s
+      ${donde}
+      GROUP BY s.categoria
+      ORDER BY total DESC`,
+    valores
+  );
+
+  const [filasTipo] = await pool.execute(
+    `SELECT s.tipo_solicitud, COUNT(*) AS total
+       FROM solicitudes s
+      ${donde}
+      GROUP BY s.tipo_solicitud`,
+    valores
+  );
+
+  const [filasDepartamento] = await pool.execute(
+    `SELECT COALESCE(d.name, 'Sin departamento') AS departamento, COUNT(*) AS total
+       FROM solicitudes s
+       LEFT JOIN departments d ON d.id = s.department_id
+      ${donde}
+      GROUP BY d.name
+      ORDER BY total DESC`,
+    valores
+  );
+
+  const [filasMensual] = await pool.execute(
+    `SELECT DATE_FORMAT(s.fecha_solicitud, '%Y-%m') AS mes, COUNT(*) AS total
+       FROM solicitudes s
+      ${donde}
+      GROUP BY mes
+      ORDER BY mes`,
+    valores
+  );
+
+  // Serie mensual por estado (para las barras comparativas/apiladas).
+  const [filasMesEstado] = await pool.execute(
+    `SELECT DATE_FORMAT(s.fecha_solicitud, '%Y-%m') AS mes, s.estado, COUNT(*) AS total
+       FROM solicitudes s
+      ${donde}
+      GROUP BY mes, s.estado
+      ORDER BY mes`,
+    valores
+  );
+
+  // Salud de la gestión: qué pasó con las solicitudes devueltas (con errores),
+  // cuáles se corrigieron (fueron reenviadas) y cuáles siguen sin corregir.
+  const [filasNotas] = await pool.execute(
+    `SELECT s.id, s.estado,
+            MAX(n.tipo_nota = 'REGRESAR') AS devuelta,
+            MAX(n.tipo_nota = 'REENVIAR') AS reenviada
+       FROM solicitudes s
+       LEFT JOIN solicitud_notas n ON n.solicitud_id = s.id
+      ${donde}
+      GROUP BY s.id, s.estado`,
+    valores
+  );
+
+  const gestion = { enProceso: 0, corregidas: 0, noCorregidas: 0, sinErrores: 0 };
+  for (const fila of filasNotas) {
+    const fueDevuelta = Boolean(fila.devuelta);
+    const fueReenviada = Boolean(fila.reenviada);
+
+    if (fila.estado === 'EN PROCESO') {
+      gestion.enProceso += 1;
+    } else if (fueDevuelta && fueReenviada) {
+      gestion.corregidas += 1;
+    } else if (fueDevuelta) {
+      gestion.noCorregidas += 1;
+    } else {
+      gestion.sinErrores += 1;
+    }
+  }
+  gestion.conErrores = gestion.corregidas + gestion.noCorregidas;
+  gestion.total = Object.values(porEstado).reduce((suma, n) => suma + n, 0);
+
+  const [ultimas] = await pool.execute(
+    `${SELECT_SOLICITUD} ${donde} ORDER BY s.created_at DESC LIMIT 6`,
+    valores
+  );
+
+  const [usuarios] = await pool.execute(
+    `SELECT COUNT(*) AS total FROM users WHERE is_active = 1`
+  );
+  const [empresas] = await pool.execute(`SELECT COUNT(*) AS total FROM companies`);
+  const [departamentos] = await pool.execute(`SELECT COUNT(*) AS total FROM departments`);
+
+  return {
+    porEstado,
+    porCategoria: filasCategoria.map((f) => ({ categoria: f.categoria, total: Number(f.total) })),
+    porTipo: filasTipo.map((f) => ({ tipo: f.tipo_solicitud, total: Number(f.total) })),
+    porDepartamento: filasDepartamento.map((f) => ({
+      departamento: f.departamento,
+      total: Number(f.total),
+    })),
+    porMes: filasMensual.map((f) => ({ mes: f.mes, total: Number(f.total) })),
+    porMesEstado: filasMesEstado.map((f) => ({
+      mes: f.mes,
+      estado: f.estado,
+      total: Number(f.total),
+    })),
+    gestion,
+    ultimas: ultimas.map(formatearSolicitud),
+    totales: {
+      solicitudes: Object.values(porEstado).reduce((suma, n) => suma + n, 0),
+      usuariosActivos: Number(usuarios[0].total),
+      empresas: Number(empresas[0].total),
+      departamentos: Number(departamentos[0].total),
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 async function obtenerSolicitudBase(id) {
   const [filas] = await pool.execute(
-    'SELECT id, estado FROM solicitudes WHERE id = ?',
+    'SELECT id, estado, solicitante_user_id FROM solicitudes WHERE id = ?',
     [id]
   );
   return filas[0] || null;

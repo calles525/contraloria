@@ -16,6 +16,7 @@ import Almacenes from './pages/configuracion/Almacenes';
 import EncargadosDepartamentos from './pages/configuracion/EncargadosDepartamentos';
 import Permisos from './pages/configuracion/Permisos';
 import Bitacora from './pages/configuracion/Bitacora';
+import Notificaciones from './pages/configuracion/Notificaciones';
 import GestionarSolicitudes from './pages/solicitudes/GestionarSolicitudes';
 import GestionSolicitudes from './pages/solicitudes/GestionSolicitudes';
 
@@ -79,6 +80,7 @@ export default function App() {
             />
             <Route path="configuracion/personas" element={<Personas />} />
             <Route path="configuracion/usuarios" element={<Usuarios />} />
+            <Route path="configuracion/notificaciones" element={<Notificaciones />} />
             <Route
               path="solicitudes/gestionar"
               element={

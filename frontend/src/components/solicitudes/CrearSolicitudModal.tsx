@@ -9,7 +9,7 @@ import {
   Requerimiento,
   Solicitud,
 } from '../../types/solicitudes';
-import { empresasApi, centrosCostoApi, departamentosApi, personasApi } from '../../services/maestros';
+import { empresasApi, centrosCostoApi, departamentosApi } from '../../services/maestros';
 import { obtenerUbicacionUsuario, UbicacionUsuario } from '../../services/auth';
 import { OpcionSelect } from '../../types/maestros';
 
@@ -35,6 +35,12 @@ interface PropsCrearSolicitudModal {
   onCrear: (datos: DatosEnvioSolicitud) => void;
   /** Permite descargar el archivo ya adjuntado de un requerimiento (solo en edición/lectura). */
   onDescargarArchivo?: (reqId: number) => Promise<void>;
+}
+
+/** Opción de departamento para el select, con los datos de su encargado (supervisor). */
+interface DepartamentoOpcion extends OpcionSelect {
+  manager_person_id: number | null;
+  manager_name: string | null;
 }
 
 const claseInput =
@@ -67,13 +73,11 @@ export default function CrearSolicitudModal({
   // Paso 3: datos dinámicos + documentos requeridos (archivos) + registro.
   const [datos, setDatos] = useState<Record<string, unknown>>(() => {
     if (!solicitudEditar) return {};
-    return {
-      ...(solicitudEditar.datos ?? {}),
-      supervisor_id:
-        solicitudEditar.supervisor_person_id != null
-          ? String(solicitudEditar.supervisor_person_id)
-          : '',
-    };
+    // El supervisor se asigna automáticamente; se descarta cualquier valor
+    // residual de versiones anteriores que lo guardaba dentro de "datos".
+    const datosEdicion = { ...(solicitudEditar.datos ?? {}) };
+    delete datosEdicion['supervisor_id'];
+    return datosEdicion;
   });
   const [requerimientos, setRequerimientos] = useState<Requerimiento[]>(
     solicitudEditar?.requerimientos ?? []
@@ -81,11 +85,17 @@ export default function CrearSolicitudModal({
   const [archivos, setArchivos] = useState<Record<string, File>>({});
   const [observaciones, setObservaciones] = useState(solicitudEditar?.observaciones ?? '');
 
-  // Cascada empresa -> sede -> departamento y supervisor.
+  // Cascada empresa -> sede -> departamento y supervisor automático.
   const [empresas, setEmpresas] = useState<OpcionSelect[]>([]);
   const [sedes, setSedes] = useState<OpcionSelect[]>([]);
-  const [departamentos, setDepartamentos] = useState<OpcionSelect[]>([]);
-  const [supervisores, setSupervisores] = useState<OpcionSelect[]>([]);
+  const [departamentos, setDepartamentos] = useState<DepartamentoOpcion[]>([]);
+  // Supervisor del departamento (encargado), calculado automáticamente.
+  const [supervisorId, setSupervisorId] = useState(
+    solicitudEditar?.supervisor_person_id != null ? String(solicitudEditar.supervisor_person_id) : ''
+  );
+  const [supervisorNombre, setSupervisorNombre] = useState(
+    solicitudEditar?.supervisor_nombre ?? ''
+  );
   const [empresaId, setEmpresaId] = useState(
     solicitudEditar ? String(solicitudEditar.empresa_id) : ''
   );
@@ -105,15 +115,23 @@ export default function CrearSolicitudModal({
       (solicitudEditar.estado === 'RECHAZADA' || solicitudEditar.estado === 'VALIDADA')
   );
 
+  /** Asigna el supervisor automático a partir del encargado del departamento elegido. */
+  function aplicarSupervisorPorDepartamento(deptos: DepartamentoOpcion[], deptId: string) {
+    const departamento = deptos.find((d) => d.value === deptId);
+    if (departamento?.manager_person_id != null) {
+      setSupervisorId(String(departamento.manager_person_id));
+      setSupervisorNombre(departamento.manager_name ?? '');
+    } else {
+      setSupervisorId('');
+      setSupervisorNombre('');
+    }
+  }
+
   useEffect(() => {
     empresasApi
       .opciones()
       .then(setEmpresas)
       .catch(() => setEmpresas([]));
-    personasApi
-      .opciones()
-      .then(setSupervisores)
-      .catch(() => setSupervisores([]));
 
     async function precargar() {
       if (solicitudEditar) {
@@ -130,15 +148,21 @@ export default function CrearSolicitudModal({
         setSedes(sedesCargadas);
         if (solicitudEditar.cost_center_id != null) {
           setSedeId(String(solicitudEditar.cost_center_id));
-          const deptos = (
+          const deptos: DepartamentoOpcion[] = (
             await departamentosApi.listar({
               company_id: String(solicitudEditar.empresa_id),
               cost_center_id: String(solicitudEditar.cost_center_id),
             })
-          ).map((d) => ({ value: String(d.id), label: d.name }));
+          ).map((d) => ({
+            value: String(d.id),
+            label: d.name,
+            manager_person_id: d.manager_person_id,
+            manager_name: d.manager_name ?? null,
+          }));
           setDepartamentos(deptos);
           if (solicitudEditar.department_id != null) {
             setDeptId(String(solicitudEditar.department_id));
+            aplicarSupervisorPorDepartamento(deptos, String(solicitudEditar.department_id));
           }
         }
         return;
@@ -155,14 +179,20 @@ export default function CrearSolicitudModal({
           const sedesCargadas = await centrosCostoApi.opciones(String(ubicacion.company_id));
           setSedes(sedesCargadas);
           setSedeId(String(ubicacion.cost_center_id));
-          const deptos = (
+          const deptos: DepartamentoOpcion[] = (
             await departamentosApi.listar({
               company_id: String(ubicacion.company_id),
               cost_center_id: String(ubicacion.cost_center_id),
             })
-          ).map((d) => ({ value: String(d.id), label: d.name }));
+          ).map((d) => ({
+            value: String(d.id),
+            label: d.name,
+            manager_person_id: d.manager_person_id,
+            manager_name: d.manager_name ?? null,
+          }));
           setDepartamentos(deptos);
           setDeptId(String(ubicacion.department_id));
+          aplicarSupervisorPorDepartamento(deptos, String(ubicacion.department_id));
         })
         .catch(() => {
           // Sin ubicación conocida: el usuario elige manualmente.
@@ -215,6 +245,8 @@ export default function CrearSolicitudModal({
     setDeptId('');
     setSedes([]);
     setDepartamentos([]);
+    setSupervisorId('');
+    setSupervisorNombre('');
     if (!valor) return;
     try {
       setSedes(await centrosCostoApi.opciones(valor));
@@ -227,17 +259,28 @@ export default function CrearSolicitudModal({
     setSedeId(valor);
     setDeptId('');
     setDepartamentos([]);
+    setSupervisorId('');
+    setSupervisorNombre('');
     if (!valor) return;
     try {
       setDepartamentos(
-        (await departamentosApi.listar({ company_id: empresaId, cost_center_id: valor })).map((d) => ({
+        (
+          await departamentosApi.listar({ company_id: empresaId, cost_center_id: valor })
+        ).map((d) => ({
           value: String(d.id),
           label: d.name,
+          manager_person_id: d.manager_person_id,
+          manager_name: d.manager_name ?? null,
         }))
       );
     } catch {
       setDepartamentos([]);
     }
+  }
+
+  function manejarCambioDepartamento(valor: string) {
+    setDeptId(valor);
+    aplicarSupervisorPorDepartamento(departamentos, valor);
   }
 
   function manejarCampoDinamico(nombre: string, valor: unknown) {
@@ -434,7 +477,7 @@ export default function CrearSolicitudModal({
       empresa_id: Number(empresaId),
       cost_center_id: sedeId ? Number(sedeId) : null,
       department_id: deptId ? Number(deptId) : null,
-      supervisor_person_id: datos['supervisor_id'] ? Number(datos['supervisor_id']) : null,
+      supervisor_person_id: supervisorId ? Number(supervisorId) : null,
       datos,
       observaciones: observaciones || undefined,
       // El cumplido real lo marca el archivo físicamente guardado en el backend.
@@ -613,7 +656,7 @@ export default function CrearSolicitudModal({
                 </label>
                 <select
                   value={deptId}
-                  onChange={(e) => setDeptId(e.target.value)}
+                  onChange={(e) => manejarCambioDepartamento(e.target.value)}
                   className={claseInput}
                   disabled={!sedeId || !!ubicacionUsuario || esSoloLectura}
                 >
@@ -629,19 +672,14 @@ export default function CrearSolicitudModal({
                 <label className="mb-1.5 block text-theme-xs font-medium text-gray-700 dark:text-gray-400">
                   Supervisor solicitante
                 </label>
-                <select
-                  value={(datos['supervisor_id'] as string) ?? ''}
-                  onChange={(e) => manejarCampoDinamico('supervisor_id', e.target.value)}
+                <input
+                  type="text"
+                  value={supervisorNombre || (supervisorId ? 'Cargando…' : 'Sin supervisor asignado')}
+                  disabled
+                  placeholder="Automático según el departamento"
+                  title="El supervisor es el encargado del departamento del solicitante"
                   className={claseInput}
-                  disabled={esSoloLectura}
-                >
-                  <option value="">Seleccione el supervisor</option>
-                  {supervisores.map((s) => (
-                    <option key={s.value} value={s.value}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
               <div>
                 <label className="mb-1.5 block text-theme-xs font-medium text-gray-700 dark:text-gray-400">

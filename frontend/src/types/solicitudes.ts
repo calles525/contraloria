@@ -9,7 +9,7 @@ export type EstadoSolicitud =
   | 'RECHAZADA'
   | 'VALIDADA';
 
-export type TipoNota = 'NOTA' | 'REGRESAR' | 'RECHAZAR' | 'VALIDAR' | 'PROCESAR';
+export type TipoNota = 'NOTA' | 'REGRESAR' | 'RECHAZAR' | 'VALIDAR' | 'PROCESAR' | 'REENVIAR';
 
 export type TipoCampoDinamico = 'texto' | 'numero' | 'area' | 'select' | 'check' | 'multi' | 'date' | 'datetime';
 
@@ -709,7 +709,7 @@ export const CAMPOS_POR_CATEGORIA: Record<string, CampoDinamico[]> = {
 // ---------------------------------------------------------------------------
 
 export const REQUERIMIENTOS_POR_CATEGORIA: Record<string, string[]> = {
-  ALMACEN: [],
+  ALMACEN: ['FOTO DEL PRODUCTO'],
   BANCOS: [], // No requiere documentos
   CLIENTE: [
     'REGISTRO MERCANTIL',

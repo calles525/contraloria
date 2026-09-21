@@ -8,7 +8,7 @@ import {
   ESTILO_TIPO,
   Solicitud,
 } from '../../types/solicitudes';
-import { notificarExito, notificarError } from '../../utils/sweetalert';
+import { confirmarEliminacion, notificarExito, notificarError } from '../../utils/sweetalert';
 
 const claseCe =
   'rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-theme-sm text-gray-800 outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white/90';
@@ -52,6 +52,9 @@ export default function CreacionSolicitudes() {
   const [solicitudEditar, setSolicitudEditar] = useState<Solicitud | null>(null);
   const [cargandoGuardar, setCargandoGuardar] = useState(false);
 
+  // Acciones de fila.
+  const [reenviandoId, setReenviandoId] = useState<number | null>(null);
+
   const esTerminal = (estado: Solicitud['estado']) => estado === 'RECHAZADA' || estado === 'VALIDADA';
 
   const cargarSolicitudes = useCallback(async () => {
@@ -87,50 +90,51 @@ export default function CreacionSolicitudes() {
     }
   }
 
-  /** Crea o actualiza la solicitud y sube los documentos nuevos elegidos en el wizard. */
+  /** Crea o actualiza la solicitud y sube los documentos nuevos elegidos en el wizard.
+   *  Los archivos viajan en la misma petición multipart (junto al resto de datos). */
   async function manejarGuardar(datos: DatosGuardarSolicitud) {
     setCargandoGuardar(true);
     try {
-      const guardada = solicitudEditar
-        ? await solicitudesApi.actualizar(solicitudEditar.id, datos)
-        : await solicitudesApi.crear(datos);
-
-      // Los archivos se suben después de guardar (se necesita el id de la solicitud).
-      const detalle = await solicitudesApi.obtener(guardada.id);
-      const subidas = await Promise.allSettled(
-        (detalle.requerimientos ?? []).map((req) => {
-          const archivo = datos.archivos[req.nombre];
-          if (!archivo) return Promise.resolve();
-          return solicitudesApi.subirArchivoRequerimiento(detalle.id, req.id!, archivo);
-        })
-      );
+      if (solicitudEditar) {
+        await solicitudesApi.actualizar(solicitudEditar.id, datos);
+      } else {
+        await solicitudesApi.crear(datos);
+      }
 
       setModalCrear(false);
       setSolicitudEditar(null);
       await cargarSolicitudes();
-
-      const fallidas = subidas.filter((r) => r.status === 'rejected').length;
-      if (fallidas > 0) {
-        notificarError(
-          solicitudEditar
-            ? `La solicitud se actualizó, pero ${fallidas} documento(s) no se pudieron adjuntar.`
-            : `La solicitud se creó, pero ${fallidas} documento(s) no se pudieron adjuntar.`
-        );
-      } else {
-        notificarExito(
-          solicitudEditar
-            ? 'Solicitud actualizada correctamente.'
-            : 'Solicitud creada correctamente.'
-        );
-      }
+      notificarExito(
+        solicitudEditar ? 'Solicitud actualizada correctamente.' : 'Solicitud creada correctamente.'
+      );
     } catch {
       notificarError(
         solicitudEditar
-          ? 'No se pudo actualizar la solicitud. Verifique los datos.'
-          : 'No se pudo crear la solicitud. Verifique los datos.'
+          ? 'No se pudo actualizar la solicitud. Verifique los datos y los documentos.'
+          : 'No se pudo crear la solicitud. Verifique los datos y los documentos.'
       );
     } finally {
       setCargandoGuardar(false);
+    }
+  }
+
+  /** Reenvía una solicitud devuelta: la vuelve a poner pendiente de gestión. */
+  async function manejarReenviar(solicitud: Solicitud) {
+    const confirmado = await confirmarEliminacion(
+      'Reenviar solicitud',
+      `¿Desea reenviar la solicitud ${solicitud.numero}? Quedará nuevamente pendiente de gestión.`
+    );
+    if (!confirmado) return;
+
+    setReenviandoId(solicitud.id);
+    try {
+      await solicitudesApi.reenviar(solicitud.id);
+      await cargarSolicitudes();
+      notificarExito('Solicitud reenviada correctamente.');
+    } catch {
+      notificarError('No se pudo reenviar la solicitud.');
+    } finally {
+      setReenviandoId(null);
     }
   }
 
@@ -344,23 +348,46 @@ export default function CreacionSolicitudes() {
                             Ver
                           </button>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => abrirSolicitud(solicitud)}
-                            className="inline-flex items-center gap-1 rounded-lg bg-brand-600 px-2.5 py-1.5 text-theme-xs font-medium text-white shadow-theme-xs hover:bg-brand-700"
-                          >
-                            <svg
-                              className="fill-current"
-                              width="14"
-                              height="14"
-                              viewBox="0 0 20 20"
-                              fill="none"
-                              xmlns="http://www.w3.org/2000/svg"
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => abrirSolicitud(solicitud)}
+                              className="inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-theme-xs font-medium text-gray-700 shadow-theme-xs hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-white/[0.03]"
                             >
-                              <path d="M12.1464 3.85355C13.3281 2.67188 15.2362 2.67188 16.4178 3.85355L16.6464 4.08218C17.8281 5.26385 17.8281 7.17195 16.6464 8.35362L8.88231 16.1177C8.62587 16.3741 8.29445 16.543 7.93564 16.6027L4.47079 17.232C3.94329 17.3232 3.42492 16.9858 3.28459 16.4714L2.51794 13.5968C2.41076 13.2086 2.42037 12.7963 2.54548 12.4142L3.14645 10.6464C3.33948 10.0955 3.76426 9.65306 4.30651 9.4375L12.1464 3.85355ZM15.3536 4.93934C14.7434 4.32917 13.7265 4.32917 13.1163 4.93934L5.45579 12.5999C5.32388 12.7318 5.23471 12.9003 5.19978 13.0831L4.83155 14.7578L6.69763 14.3424C6.84565 14.3112 6.98516 14.2445 7.10204 14.1477L14.9706 6.27917C15.5808 5.669 15.5808 4.65202 14.9706 4.04185L15.3536 4.93934Z" />
-                            </svg>
-                            Editar
-                          </button>
+                              <svg
+                                className="fill-gray-500 dark:fill-gray-400"
+                                width="14"
+                                height="14"
+                                viewBox="0 0 20 20"
+                                fill="none"
+                                xmlns="http://www.w3.org/2000/svg"
+                              >
+                                <path d="M12.1464 3.85355C13.3281 2.67188 15.2362 2.67188 16.4178 3.85355L16.6464 4.08218C17.8281 5.26385 17.8281 7.17195 16.6464 8.35362L8.88231 16.1177C8.62587 16.3741 8.29445 16.543 7.93564 16.6027L4.47079 17.232C3.94329 17.3232 3.42492 16.9858 3.28459 16.4714L2.51794 13.5968C2.41076 13.2086 2.42037 12.7963 2.54548 12.4142L3.14645 10.6464C3.33948 10.0955 3.76426 9.65306 4.30651 9.4375L12.1464 3.85355ZM15.3536 4.93934C14.7434 4.32917 13.7265 4.32917 13.1163 4.93934L5.45579 12.5999C5.32388 12.7318 5.23471 12.9003 5.19978 13.0831L4.83155 14.7578L6.69763 14.3424C6.84565 14.3112 6.98516 14.2445 7.10204 14.1477L14.9706 6.27917C15.5808 5.669 15.5808 4.65202 14.9706 4.04185L15.3536 4.93934Z" />
+                              </svg>
+                              Editar
+                            </button>
+
+                            {solicitud.estado === 'DEVUELTA' && (
+                              <button
+                                type="button"
+                                onClick={() => manejarReenviar(solicitud)}
+                                disabled={reenviandoId === solicitud.id}
+                                className="inline-flex items-center gap-1 rounded-lg bg-success-600 px-2.5 py-1.5 text-theme-xs font-medium text-white shadow-theme-xs hover:bg-success-700 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                <svg
+                                  className="fill-current"
+                                  width="14"
+                                  height="14"
+                                  viewBox="0 0 20 20"
+                                  fill="none"
+                                  xmlns="http://www.w3.org/2000/svg"
+                                >
+                                  <path d="M6.5 8.5L14.5 8.5L12.2 6.2C11.9 5.9 11.9 5.5 12.2 5.2C12.5 4.9 12.9 4.9 13.2 5.2L16.8 8.8C17.1 9.1 17.1 9.5 16.8 9.8L13.2 13.4C12.9 13.7 12.5 13.7 12.2 13.4C11.9 13.1 11.9 12.7 12.2 12.4L14.5 10.1L6.5 10.1C5.4 10.1 4.5 11 4.5 12.1L4.5 15.5C4.5 15.9 4.2 16.2 3.8 16.2C3.4 16.2 3 15.9 3 15.5L3 12.1C3 10.2 4.5 8.5 6.5 8.5Z" />
+                                </svg>
+                                {reenviandoId === solicitud.id ? 'Reenviando…' : 'Reenviar'}
+                              </button>
+                            )}
+                          </div>
                         )}
                       </td>
                     </tr>
