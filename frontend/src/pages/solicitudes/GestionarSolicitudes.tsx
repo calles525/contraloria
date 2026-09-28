@@ -65,7 +65,9 @@ export default function CreacionSolicitudes() {
           estado: filtroEstado || undefined,
           categoria: filtroCategoria || undefined,
           q: buscador || undefined,
-          solo_departamento: '1',
+          // Pantalla de Creación: solo las solicitudes creadas por el
+          // departamento del usuario (las que hizo su departamento).
+          solo_departamento_origen: '1',
         })
       );
       setError('');

@@ -191,8 +191,7 @@ export default function CrearSolicitudModal({
             manager_name: d.manager_name ?? null,
           }));
           setDepartamentos(deptos);
-          setDeptId(String(ubicacion.department_id));
-          aplicarSupervisorPorDepartamento(deptos, String(ubicacion.department_id));
+          // El departamento destino no se autocompleta: lo elige el usuario.
         })
         .catch(() => {
           // Sin ubicación conocida: el usuario elige manualmente.
@@ -465,6 +464,11 @@ export default function CrearSolicitudModal({
       return;
     }
 
+    if (!deptId) {
+      setError('Debe seleccionar el departamento destino de la solicitud.');
+      return;
+    }
+
     const errorValidacion = validarPaso3();
     if (errorValidacion) {
       setError(errorValidacion);
@@ -652,13 +656,13 @@ export default function CrearSolicitudModal({
               </div>
               <div>
                 <label className="mb-1.5 block text-theme-xs font-medium text-gray-700 dark:text-gray-400">
-                  Departamento
+                  Departamento destino <span className="text-error-500">*</span>
                 </label>
                 <select
                   value={deptId}
                   onChange={(e) => manejarCambioDepartamento(e.target.value)}
                   className={claseInput}
-                  disabled={!sedeId || !!ubicacionUsuario || esSoloLectura}
+                  disabled={!sedeId || esSoloLectura}
                 >
                   <option value="">Seleccione el departamento</option>
                   {departamentos.map((d) => (

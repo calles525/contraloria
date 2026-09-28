@@ -45,8 +45,10 @@ export interface FiltrosSolicitudes {
   tipo_solicitud?: string;
   empresa_id?: number | string;
   q?: string;
-  /** Limita el resultado a las solicitudes del departamento del usuario. */
+  /** Limita el resultado a las solicitudes recibidas por el departamento del usuario (destino). */
   solo_departamento?: '1';
+  /** Limita el resultado a las solicitudes creadas por el departamento del usuario (origen). */
+  solo_departamento_origen?: '1';
 }
 
 export const solicitudesApi = {
@@ -58,6 +60,9 @@ export const solicitudesApi = {
     if (filtros?.empresa_id) params.empresa_id = filtros.empresa_id;
     if (filtros?.q) params.q = filtros.q;
     if (filtros?.solo_departamento) params.solo_departamento = filtros.solo_departamento;
+    if (filtros?.solo_departamento_origen) {
+      params.solo_departamento_origen = filtros.solo_departamento_origen;
+    }
     return api.get<RespuestaLista<Solicitud>>('/solicitudes', { params }).then((r) => r.data.data);
   },
 

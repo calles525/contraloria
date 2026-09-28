@@ -109,18 +109,12 @@ export async function enviarMensajeWhatsApp({ telefono, texto }) {
 }
 
 /**
- * Envía un mensaje a los usuarios asignados como destinatarios de WhatsApp
- * del departamento indicado. Por defecto no incluye al usuario que origina la
- * acción, salvo que este sea el único destinatario activo del departamento
- * (si se excluyera, nadie recibiría el aviso).
+ * Envía un mensaje a todos los usuarios asignados como destinatarios de
+ * WhatsApp del departamento indicado.
  *
- * @param {object} datos { departmentId, mensaje, origenUserId }
+ * @param {object} datos { departmentId, mensaje }
  */
-export async function enviarWhatsAppADestinatariosDepartamento({
-  departmentId,
-  mensaje,
-  origenUserId = null,
-}) {
+export async function enviarWhatsAppADestinatariosDepartamento({ departmentId, mensaje }) {
   try {
     if (!departmentId) return 0;
 
@@ -135,17 +129,8 @@ export async function enviarWhatsAppADestinatariosDepartamento({
 
     if (filas.length === 0) return 0;
 
-    const origenId = origenUserId ? Number(origenUserId) : null;
-    const esUnicoDestinatario =
-      origenId && filas.length === 1 && Number(filas[0].id) === origenId;
-    const destinatarios = esUnicoDestinatario
-      ? filas
-      : filas.filter((usuario) => !origenId || Number(usuario.id) !== origenId);
-
-    if (destinatarios.length === 0) return 0;
-
     const resultados = await Promise.allSettled(
-      destinatarios.map((usuario) => enviarMensajeWhatsApp({ telefono: usuario.phone, texto: mensaje }))
+      filas.map((usuario) => enviarMensajeWhatsApp({ telefono: usuario.phone, texto: mensaje }))
     );
 
     return resultados.filter((r) => r.status === 'fulfilled' && r.value === true).length;
@@ -156,31 +141,30 @@ export async function enviarWhatsAppADestinatariosDepartamento({
 }
 
 /**
- * Envía un mensaje de WhatsApp a la persona que realizó una solicitud,
- * usando el teléfono registrado en su ficha (persons.phone).
+ * Devuelve el departamento de origen de una solicitud, es decir aquel al que
+ * pertenece quien la creó. La solicitud solo guarda el departamento destino,
+ * por lo que el origen se deduce del empleado asociado al solicitante.
  *
- * @param {object} datos { userId, mensaje }
+ * @param {number} solicitanteUserId
+ * @returns {Promise<{id: number, nombre: string}|null>}
  */
-export async function enviarWhatsAppASolicitante({ userId, mensaje }) {
-  try {
-    if (!userId) return false;
+export async function obtenerDepartamentoOrigenSolicitud(solicitanteUserId) {
+  if (!solicitanteUserId) return null;
 
+  try {
     const [filas] = await pool.execute(
-      `SELECT p.phone
+      `SELECT d.id, d.name AS nombre
        FROM users u
-       JOIN persons p ON p.id = u.person_id
-       WHERE u.id = ?`,
-      [userId]
+       JOIN employees e ON e.person_id = u.person_id
+       JOIN departments d ON d.id = e.department_id
+       WHERE u.id = ?
+       LIMIT 1`,
+      [solicitanteUserId]
     );
 
-    if (filas.length === 0 || !filas[0].phone) {
-      console.warn(`WhatsApp: el usuario ${userId} no tiene teléfono registrado.`);
-      return false;
-    }
-
-    return enviarMensajeWhatsApp({ telefono: filas[0].phone, texto: mensaje });
+    return filas[0] ?? null;
   } catch (error) {
-    console.error('WhatsApp: no se pudo notificar al solicitante:', error.message);
-    return false;
+    console.error('WhatsApp: no se pudo resolver el departamento de origen:', error.message);
+    return null;
   }
 }

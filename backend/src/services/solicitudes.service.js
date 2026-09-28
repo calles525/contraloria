@@ -97,11 +97,24 @@ export async function listarSolicitudes(filtros = {}, userId) {
     condiciones.push('(s.numero LIKE ? OR s.categoria LIKE ?)');
     params.push(`%${filtros.q}%`, `%${filtros.q}%`);
   }
-  // Alcance por departamento: el usuario solo ve solicitudes del departamento
-  // al que pertenece en el organigrama (employees).
+  // Alcance por departamento DESTINO: el usuario solo ve las solicitudes dirigidas
+  // al departamento al que pertenece en el organigrama (employees). Es el que
+  // usa la pantalla de "Gestión de solicitudes".
   if (filtros.solo_departamento) {
     condiciones.push(
       's.department_id = (SELECT e.department_id FROM employees e JOIN users u ON u.person_id = e.person_id WHERE u.id = ?)'
+    );
+    params.push(userId);
+  }
+  // Alcance por departamento ORIGEN: el usuario solo ve las solicitudes creadas
+  // por personas de su propio departamento. Es el que usa la pantalla de
+  // "Creación de solicitudes".
+  if (filtros.solo_departamento_origen) {
+    condiciones.push(
+      `(SELECT e.department_id FROM employees e JOIN users u ON u.person_id = e.person_id
+        WHERE u.id = s.solicitante_user_id)
+       = (SELECT e2.department_id FROM employees e2 JOIN users u2 ON u2.person_id = e2.person_id
+        WHERE u2.id = ?)`
     );
     params.push(userId);
   }
@@ -171,6 +184,19 @@ export async function crearSolicitud(datosEntrada, userId, archivos = []) {
   if (!Number.isInteger(empresa_id)) {
     throw crearError(400, 'Debe seleccionar una empresa.');
   }
+  if (!Number.isInteger(department_id)) {
+    throw crearError(400, 'Debe seleccionar el departamento destino de la solicitud.');
+  }
+
+  // Se valida que el departamento exista para devolver un error claro y no un
+  // fallo de llave foránea.
+  const [departamentos] = await pool.execute(
+    'SELECT 1 FROM departments WHERE id = ? LIMIT 1',
+    [department_id]
+  );
+  if (departamentos.length === 0) {
+    throw crearError(400, 'El departamento destino seleccionado no existe.');
+  }
 
   const numero = await generarNumeroSolicitud();
 
@@ -190,7 +216,7 @@ export async function crearSolicitud(datosEntrada, userId, archivos = []) {
         categoria,
         empresa_id,
         cost_center_id || null,
-        department_id || null,
+        department_id,
         userId,
         supervisor_person_id || null,
         datos !== undefined ? JSON.stringify(datos) : null,

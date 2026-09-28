@@ -47,6 +47,8 @@ export default function GestionSolicitudes() {
           estado: filtroEstado || undefined,
           categoria: filtroCategoria || undefined,
           q: buscador || undefined,
+          // Solo las solicitudes destinadas al departamento del usuario.
+          solo_departamento: '1',
         })
       );
       setError('');

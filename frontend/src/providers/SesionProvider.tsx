@@ -37,8 +37,12 @@ export function SesionProvider({ children }: { children: React.ReactNode }) {
   }, [token, navigate]);
 
   // Guarda el token y dispara la validación inmediata de la sesión.
+  // Se marca "cargando" de forma síncrona porque, si no, la ruta protegida se
+  // evalúa antes de validar la sesión, ve que no hay usuario y devuelve al
+  // login: obliga a pulsar "Ingresar" una segunda vez.
   function iniciarSesion(nuevoToken: string) {
     guardarToken(nuevoToken);
+    setCargando(true);
     setToken(nuevoToken);
   }
 

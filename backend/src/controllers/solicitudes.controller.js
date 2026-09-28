@@ -18,7 +18,7 @@ import { registrarBitacora } from '../services/bitacora.service.js';
 import { notificarActividadSolicitudes } from '../services/notificaciones.service.js';
 import {
   enviarWhatsAppADestinatariosDepartamento,
-  enviarWhatsAppASolicitante,
+  obtenerDepartamentoOrigenSolicitud,
 } from '../services/whatsapp.service.js';
 
 /**
@@ -62,39 +62,100 @@ async function registrarEstadoSolicitud({ req, solicitud, accion, verbo }) {
     origenUserId: req.user.id,
     departmentId: solicitud.department_id ?? null,
   });
-
-  // Aviso por WhatsApp a la persona que realizó la solicitud.
-  notificarWhatsAppSolicitante({ req, solicitud, accion });
 }
 
-const MENSAJES_WHATSAPP_POR_ACCION = {
-  procesar: 'está EN PROCESO y será atendida por el departamento correspondiente.',
-  regresar: 'fue DEVUELTA. Revise las observaciones y realice los ajustes necesarios.',
-  validar: 'fue VALIDADA correctamente.',
-};
+/** Pie común de los avisos de WhatsApp. */
+const PIE_MENSAJE = 'Sistema de/Controloría';
 
-/** Avisa por WhatsApp a quien realizó la solicitud cuando cambia su estado. */
-function notificarWhatsAppSolicitante({ req, solicitud, accion }) {
-  const texto = MENSAJES_WHATSAPP_POR_ACCION[accion];
-  if (!texto || !solicitud.solicitante_user_id) return;
-  const numero = solicitud.numero || `#${solicitud.id}`;
-  enviarWhatsAppASolicitante({
-    userId: solicitud.solicitante_user_id,
-    mensaje: `Hola ${solicitud.solicitante_nombre}. Su solicitud ${numero} (${solicitud.categoria}) ${texto}`,
-  });
+/**
+ * Saluda según la hora del día para que el aviso no diga "Buenos días" a las
+ * nueve de la noche.
+ */
+function saludoSegunHora() {
+  const hora = new Date().getHours();
+  if (hora < 12) return 'Buenos días';
+  if (hora < 19) return 'Buenas tardes';
+  return 'Buenas noches';
 }
 
-/** Avisa por WhatsApp a los destinatarios configurados del departamento destino. */
-function notificarWhatsAppDepartamento({ req, solicitud, mensaje }) {
-  if (!solicitud.department_id) return;
-  const numero = solicitud.numero || `#${solicitud.id}`;
-  enviarWhatsAppADestinatariosDepartamento({
-    departmentId: solicitud.department_id,
-    origenUserId: req.user.id,
-    mensaje:
-      mensaje ||
-      `Nueva solicitud ${numero} (${solicitud.categoria}) creada por ${req.user.username}. Queda pendiente de gestión en su departamento.`,
-  });
+/**
+ * Avisa por WhatsApp a los asignados del departamento DESTINO cuando entra una
+ * solicitud nueva o reenviada. El mensaje menciona solo al departamento que
+ * envía la solicitud, nunca a la persona.
+ */
+async function notificarWhatsAppDestino({ solicitud, esReenvio = false }) {
+  try {
+    if (!solicitud.department_id) return;
+
+    const origen = await obtenerDepartamentoOrigenSolicitud(solicitud.solicitante_user_id);
+    const nombre = origen?.nombre ?? 'Un departamento';
+    const numero = solicitud.numero || `#${solicitud.id}`;
+    const categoria = solicitud.categoria || 'sin categoría';
+
+    const mensaje = esReenvio
+      ? `${saludoSegunHora()}.
+
+El departamento ${nombre} ha reenviado la solicitud ${numero} (${categoria}) y la envía nuevamente a su departamento para que sea procesada y gestionada.
+
+Le agradecemos su atención y quedamos atentos a sus comentarios.
+
+${PIE_MENSAJE}`
+      : `${saludoSegunHora()}.
+
+El departamento ${nombre} ha creado la solicitud ${numero} (${categoria}) y la envía a su departamento para que sea procesada y gestionada.
+
+Le agradecemos su atención y quedamos atentos a sus comentarios.
+
+${PIE_MENSAJE}`;
+
+    enviarWhatsAppADestinatariosDepartamento({
+      departmentId: solicitud.department_id,
+      mensaje,
+    });
+  } catch (error) {
+    console.error('WhatsApp: no se pudo avisar al departamento destino:', error.message);
+  }
+}
+
+/**
+ * Avisa por WhatsApp a los asignados del departamento de ORIGIN cuando su
+ * solicitud queda lista o le es devuelta.
+ */
+async function notificarWhatsAppOrigen({ solicitud, accion }) {
+  try {
+    if (accion !== 'validar' && accion !== 'regresar') return;
+
+    const origen = await obtenerDepartamentoOrigenSolicitud(solicitud.solicitante_user_id);
+    if (!origen) return;
+
+    const numero = solicitud.numero || `#${solicitud.id}`;
+
+    const mensaje =
+      accion === 'validar'
+        ? `${saludoSegunHora()}.
+
+La solicitud ${numero} ha sido validada y se encuentra lista.
+
+Agradecemos su seguimiento. Para cualquier duda, puede comunicarse con este departamento.
+
+${PIE_MENSAJE}`
+        : `${saludoSegunHora()}.
+
+La solicitud ${numero} ha sido devuelta para su corrección.
+
+Le rogamos revisar las observaciones e ingresar los ajustes solicitados.
+
+Agradecemos su atención.
+
+${PIE_MENSAJE}`;
+
+    enviarWhatsAppADestinatariosDepartamento({
+      departmentId: origen.id,
+      mensaje,
+    });
+  } catch (error) {
+    console.error('WhatsApp: no se pudo avisar al departamento de origen:', error.message);
+  }
 }
 
 async function listar(req, res, next) {
@@ -153,7 +214,7 @@ async function crear(req, res, next) {
     });
 
     // Aviso por WhatsApp a los destinatarios del departamento destino.
-    notificarWhatsAppDepartamento({ req, solicitud });
+    notificarWhatsAppDestino({ solicitud });
 
     res.status(201).json({ data: solicitud });
   } catch (error) {
@@ -214,14 +275,6 @@ async function procesar(req, res, next) {
     );
     await registrarEstadoSolicitud({ req, solicitud, accion: 'procesar', verbo: 'Procesó' });
 
-    // Se avisa por WhatsApp a los destinatarios del departamento destino:
-    // la solicitud quedó en proceso y será gestionada.
-    notificarWhatsAppDepartamento({
-      req,
-      solicitud,
-      mensaje: `La solicitud ${solicitud.numero || `#${solicitud.id}`} (${solicitud.categoria}) fue puesta EN PROCESO por ${req.user.username}. Queda para gestión en su departamento.`,
-    });
-
     res.json({ data: solicitud });
   } catch (error) {
     next(error);
@@ -236,6 +289,10 @@ async function regresar(req, res, next) {
       req.body?.nota
     );
     await registrarEstadoSolicitud({ req, solicitud, accion: 'regresar', verbo: 'Devolvió' });
+
+    // Se avisa por WhatsApp a los asignados del departamento de origen.
+    notificarWhatsAppOrigen({ solicitud, accion: 'regresar' });
+
     res.json({ data: solicitud });
   } catch (error) {
     next(error);
@@ -252,11 +309,7 @@ async function reenviar(req, res, next) {
     await registrarEstadoSolicitud({ req, solicitud, accion: 'reenviar', verbo: 'Reenvió' });
 
     // Se avisa por WhatsApp al departamento destino: la solicitud volvió a quedar pendiente.
-    notificarWhatsAppDepartamento({
-      req,
-      solicitud,
-      mensaje: `La solicitud ${solicitud.numero || `#${solicitud.id}`} fue reenviada por ${req.user.username} y quedó PENDIENTE de gestión en su departamento.`,
-    });
+    notificarWhatsAppDestino({ solicitud, esReenvio: true });
 
     res.json({ data: solicitud });
   } catch (error) {
@@ -272,6 +325,10 @@ async function validar(req, res, next) {
       req.body?.nota
     );
     await registrarEstadoSolicitud({ req, solicitud, accion: 'validar', verbo: 'Validó' });
+
+    // Se avisa por WhatsApp a los asignados del departamento de origen.
+    notificarWhatsAppOrigen({ solicitud, accion: 'validar' });
+
     res.json({ data: solicitud });
   } catch (error) {
     next(error);

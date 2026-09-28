@@ -20,18 +20,34 @@ import Notificaciones from './pages/configuracion/Notificaciones';
 import GestionarSolicitudes from './pages/solicitudes/GestionarSolicitudes';
 import GestionSolicitudes from './pages/solicitudes/GestionSolicitudes';
 
+/** Pantalla de espera mientras se valida la sesión. */
+function PantallaCargando() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-gray-900">
+      <p className="text-theme-sm text-gray-500 dark:text-gray-400">Cargando…</p>
+    </div>
+  );
+}
+
 function RutaProtegida({ children }: { children: JSX.Element }) {
   const { cargando, usuario } = useSesion();
 
   if (cargando) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-gray-900">
-        <p className="text-theme-sm text-gray-500 dark:text-gray-400">Cargando…</p>
-      </div>
-    );
+    return <PantallaCargando />;
   }
 
   return usuario ? children : <Navigate to="/login" replace />;
+}
+
+/** Pantalla de login: si ya hay sesión activa, entra directo al sistema. */
+function RutaLogin() {
+  const { cargando, usuario } = useSesion();
+
+  if (cargando) {
+    return <PantallaCargando />;
+  }
+
+  return usuario ? <Navigate to="/" replace /> : <Login />;
 }
 
 /** Restringe una ruta a usuarios que tengan el permiso indicado. */
@@ -51,7 +67,7 @@ export default function App() {
     <BrowserRouter>
       <SesionProvider>
         <Routes>
-          <Route path="/login" element={<Login />} />
+          <Route path="/login" element={<RutaLogin />} />
           <Route
             path="/"
             element={
